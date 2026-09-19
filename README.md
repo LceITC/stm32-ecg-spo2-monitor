@@ -10,6 +10,7 @@
 - 使用 MAX30102 采集 RED/IR 数据，进行手指状态判断和 SpO2 计算。
 - 使用 OLED 显示 ECG 数值、心率、SpO2、手指状态、传感器初始化状态和 PPG 波形页面。
 - USART1 以 115200 8N1 上传 CSV 数据，并接收 ECG 采集源切换命令。
+- 提供基于 Web Serial 的网页上位机，用于实时显示 ECG/PPG 波形、心率、血氧和串口日志。
 - 提供 ECG 心率算法和 MAX30102 SpO2 算法的主机端 CMake 测试。
 
 ## 硬件平台
@@ -101,11 +102,25 @@ USART1 参数：115200 baud，8 数据位，1 停止位，无校验。
     my_lib/Inc、my_lib/Src           OLED、延时和串口底层驱动
     start/                           启动文件和 CMSIS 核心文件
     user/                            main 和中断文件
+    host/采样上位机.html             Web Serial 采样上位机
     tests/                           主机端算法测试
     tmp/pdfs/                        项目参考文档及图片
     CMakeLists.txt                   固件工程 CMake 配置
     5_1OLED.ioc                      STM32CubeMX 工程文件
     STM32F103C8TX_FLASH.ld           链接脚本
+
+## 网页上位机
+
+上位机文件位于 `host/采样上位机.html`，不依赖额外的 JavaScript 或图片文件，直接用最新版 Chrome 或 Edge 打开即可。
+
+使用步骤：
+
+1. 将 USB-TTL 的 TXD 接 STM32 的 PA10（USART1_RX），RXD 接 PA9（USART1_TX），并连接共地。
+2. 确认串口参数为 115200 8N1。
+3. 用 Chrome 或 Edge 打开 `host/采样上位机.html`，点击连接串口并选择对应设备。
+4. 页面接收 STM32 发送的 `ECG_Val,SpO2,HR,IR` 四字段 CSV 数据，并实时绘制 ECG、PPG 波形。
+
+浏览器需要支持 Web Serial。若暂时没有开发板，也可以打开页面中的演示模式查看界面和波形。
 
 ## 主机端测试
 
@@ -144,4 +159,3 @@ USART1 参数：115200 baud，8 数据位，1 停止位，无校验。
 2. ECG 采集源切换后，滤波器和心率检测器会重新初始化，需要等待新的 2 秒窗口建立阈值。
 3. MAX30102 初始化失败时，OLED 和串口会报告初始化状态，但 ECG 采集仍可独立运行。
 4. 本项目用于嵌入式开发、算法验证和实验数据采集，不用于医疗诊断。
-
