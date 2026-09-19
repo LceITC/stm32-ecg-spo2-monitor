@@ -122,6 +122,20 @@ USART1 参数：115200 baud，8 数据位，1 停止位，无校验。
 
 浏览器需要支持 Web Serial。若暂时没有开发板，也可以打开页面中的演示模式查看界面和波形。
 
+## 效果展示
+
+### OLED ECG、心率与血氧数据显示
+
+![OLED ECG、心率与血氧数据显示](docs/images/oled-ecg-status.png)
+
+### OLED PPG 波形显示
+
+![OLED PPG 波形显示](docs/images/oled-ppg-waveform.png)
+
+### 网页上位机实时监护界面
+
+![网页上位机实时监护界面](docs/images/web-serial-monitor.png)
+
 ## 主机端测试
 
 主机端测试不需要 ARM 编译器。需要安装 CMake 和本机 C 编译器。
