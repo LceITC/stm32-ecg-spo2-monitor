@@ -2,51 +2,57 @@
 #include "delay.h"
 
 /* 本驱动使用 PB10/PB11 开漏输出模拟独立 I2C 总线。 */
-#define SCL GPIO_Pin_10
-#define SDA GPIO_Pin_11
+#define SCL GPIO_Pin_10 /* PB10，MAX30102软件I2C时钟线。 */
+#define SDA GPIO_Pin_11 /* PB11，MAX30102软件I2C数据线。 */
 
-#define REG_INTR_STATUS_1 0x00U
-#define REG_INTR_STATUS_2 0x01U
-#define REG_INTR_ENABLE_1 0x02U
-#define REG_INTR_ENABLE_2 0x03U
-#define REG_FIFO_WR_PTR 0x04U
-#define REG_OVF_COUNTER 0x05U
-#define REG_FIFO_RD_PTR 0x06U
-#define REG_FIFO_DATA 0x07U
-#define REG_FIFO_CONFIG 0x08U
-#define REG_MODE_CONFIG 0x09U
-#define REG_SPO2_CONFIG 0x0AU
-#define REG_LED1_PA 0x0CU
-#define REG_LED2_PA 0x0DU
-#define REG_PILOT_PA 0x10U
-#define REG_PART_ID 0xFFU
+/* MAX30102寄存器地址。 */
+#define REG_INTR_STATUS_1 0x00U /* 中断状态1，读取后清除对应标志。 */
+#define REG_INTR_STATUS_2 0x01U /* 中断状态2，读取后清除对应标志。 */
+#define REG_INTR_ENABLE_1 0x02U /* 中断使能1，本项目只开启PPG Ready。 */
+#define REG_INTR_ENABLE_2 0x03U /* 中断使能2，本项目保持关闭。 */
+#define REG_FIFO_WR_PTR 0x04U   /* FIFO写指针，低5位有效。 */
+#define REG_OVF_COUNTER 0x05U   /* FIFO溢出计数，非0表示数据丢失。 */
+#define REG_FIFO_RD_PTR 0x06U   /* FIFO读指针，低5位有效。 */
+#define REG_FIFO_DATA 0x07U     /* FIFO数据端口，读取后读指针自动推进。 */
+#define REG_FIFO_CONFIG 0x08U   /* FIFO平均、回卷和满阈值配置。 */
+#define REG_MODE_CONFIG 0x09U   /* 芯片复位和工作模式配置。 */
+#define REG_SPO2_CONFIG 0x0AU   /* ADC量程、采样率和LED脉宽配置。 */
+#define REG_LED1_PA 0x0CU       /* LED1红光驱动电流。 */
+#define REG_LED2_PA 0x0DU       /* LED2红外驱动电流。 */
+#define REG_PILOT_PA 0x10U      /* 导频LED电流，本项目不使用。 */
+#define REG_PART_ID 0xFFU       /* 器件型号标识寄存器。 */
 
-#define MODE_RESET 0x40U
-#define MODE_SPO2 0x03U
-#define INTR_PPG_READY 0x40U
-#define FIFO_POINTER_MASK 0x1FU
-#define RESET_TIMEOUT_MS 100U
+#define MODE_RESET 0x40U       /* MODE_CONFIG中的软件复位位。 */
+#define MODE_SPO2 0x03U        /* 同时采集RED和IR的SpO2模式。 */
+#define INTR_PPG_READY 0x40U    /* 新PPG样本就绪中断使能位。 */
+#define FIFO_POINTER_MASK 0x1FU /* FIFO指针只有低5位有效。 */
+#define RESET_TIMEOUT_MS 100U   /* 等待芯片自动完成复位的最长时间。 */
 
+/* 每次SCL/SDA电平变化后延时2us，形成约250kHz以内的软件I2C时序。 */
 static void d(void)
 {
     DelayUs(2U);
 }
 
+/* 设置SCL输出；x为0时拉低，非0时释放开漏线由上拉电阻拉高。 */
 static void cl(uint8_t x)
 {
     GPIO_WriteBit(GPIOB, SCL, x ? Bit_SET : Bit_RESET);
 }
 
+/* 设置SDA输出；x为0时拉低，非0时释放开漏数据线。 */
 static void da(uint8_t x)
 {
     GPIO_WriteBit(GPIOB, SDA, x ? Bit_SET : Bit_RESET);
 }
 
+/* 读取SDA总线实际电平，用于接收数据位和从机ACK。 */
 static uint8_t rd(void)
 {
     return GPIO_ReadInputDataBit(GPIOB, SDA) == Bit_SET;
 }
 
+/* 产生I2C START：SCL为高期间将SDA从高拉到低。 */
 static void st(void)
 {
     da(1U);
@@ -57,6 +63,7 @@ static void st(void)
     cl(0U);
 }
 
+/* 产生I2C STOP：SCL为高期间释放SDA从低回到高。 */
 static void sp(void)
 {
     da(0U);
@@ -66,9 +73,10 @@ static void sp(void)
     d();
 }
 
+/* 最高位优先发送一个字节x，并返回从机是否产生低电平ACK。 */
 static bool wb(uint8_t x)
 {
-    int8_t i;
+    int8_t i; /* 从位7递减到位0的发送位序号。 */
 
     for (i = 7; i >= 0; --i)
     {
@@ -90,10 +98,14 @@ static bool wb(uint8_t x)
     return x == 0U;
 }
 
+/*
+ * 最高位优先读取一个字节。ack为true时主机在第9个时钟发送ACK，
+ * 表示还要继续读取；false发送NACK，表示这是最后一个字节。
+ */
 static uint8_t rb(bool ack)
 {
-    int8_t i;
-    uint8_t x = 0U;
+    int8_t i; /* 从位7递减到位0的接收位序号。 */
+    uint8_t x = 0U; /* 按位拼接得到的完整接收字节。 */
 
     da(1U);
     for (i = 7; i >= 0; --i)
@@ -115,9 +127,10 @@ static uint8_t rb(bool ack)
     return x;
 }
 
+/* 向寄存器r写入单字节x，任一地址/数据阶段无ACK都返回false。 */
 static bool wr(uint8_t r, uint8_t x)
 {
-    bool ok;
+    bool ok; /* 三个发送字节是否全部得到从机ACK。 */
 
     st();
     ok = wb(MAX30102_WRITE_ADDRESS) && wb(r) && wb(x);
@@ -126,9 +139,10 @@ static bool wr(uint8_t r, uint8_t x)
     return ok;
 }
 
+/* 尝试释放被异常事务占用的SDA，并以STOP使总线回到空闲状态。 */
 static void recover_bus(void)
 {
-    uint8_t pulse;
+    uint8_t pulse; /* SDA被拉低时输出的恢复时钟计数。 */
 
     da(1U);
     cl(1U);
@@ -149,10 +163,14 @@ static void recover_bus(void)
     sp();
 }
 
+/*
+ * 从寄存器r开始连续读取n个字节到p。先写寄存器地址，再重复START进入
+ * 读方向；除最后一字节外，主机都会回复ACK。
+ */
 static bool rr(uint8_t r, uint8_t *p, uint8_t n)
 {
-    uint8_t i;
-    bool ok;
+    uint8_t i; /* p缓冲区的当前写入下标。 */
+    bool ok; /* 地址和寄存器阶段是否得到从机ACK。 */
 
     st();
     ok = wb(MAX30102_WRITE_ADDRESS) && wb(r);
@@ -173,22 +191,25 @@ static bool rr(uint8_t r, uint8_t *p, uint8_t n)
     return ok;
 }
 
+/* 将写指针、溢出计数和读指针全部写0，使FIFO重新同步为空。 */
 static bool clear_fifo(void)
 {
     return wr(REG_FIFO_WR_PTR, 0U) && wr(REG_OVF_COUNTER, 0U) &&
            wr(REG_FIFO_RD_PTR, 0U);
 }
 
+/* 回读reg并比较expected，用于确认初始化写入确实生效。 */
 static bool register_equals(uint8_t reg, uint8_t expected)
 {
-    uint8_t actual;
+    uint8_t actual; /* 从芯片回读的实际寄存器值。 */
 
     return rr(reg, &actual, 1U) && actual == expected;
 }
 
+/* 初始化软件I2C引脚和低有效INT引脚，并恢复可能被占用的总线。 */
 void MAX30102_GPIO_Init(void)
 {
-    GPIO_InitTypeDef g;
+    GPIO_InitTypeDef g; /* 先复用为I2C开漏输出，再复用为INT上拉输入。 */
 
     RCC_APB2PeriphClockCmd(RCC_APB2Periph_GPIOB, ENABLE);
 
@@ -208,11 +229,15 @@ void MAX30102_GPIO_Init(void)
     recover_bus();
 }
 
+/*
+ * 完成软复位、PART_ID校验、FIFO/SpO2/LED配置和关键寄存器回读。
+ * part_id始终由调用者提供存储空间，便于诊断型号不匹配。
+ */
 MAX30102_InitStatus MAX30102_Init(uint8_t *part_id)
 {
-    uint8_t id;
-    uint8_t mode;
-    uint32_t reset_start;
+    uint8_t id; /* 保存PART_ID，也临时接收启动阶段的状态寄存器。 */
+    uint8_t mode; /* 轮询MODE_CONFIG，检查RESET位是否自动清零。 */
+    uint32_t reset_start; /* 软复位命令发出时的毫秒时间。 */
 
     if (part_id == 0)
     {
@@ -283,18 +308,23 @@ MAX30102_InitStatus MAX30102_Init(uint8_t *part_id)
     return MAX30102_INIT_OK;
 }
 
+/* 直接读取PB12低有效INT电平，不在此函数中清除任何芯片状态。 */
 bool MAX30102_DataReady(void)
 {
     return GPIO_ReadInputDataBit(MAX30102_INT_PORT, MAX30102_INT_PIN) ==
            Bit_RESET;
 }
 
+/*
+ * 读取并检查FIFO指针，再取出最旧的一组RED/IR。返回false表示当前无
+ * 未读样本、FIFO溢出、参数无效或任一I2C事务失败。
+ */
 bool MAX30102_ReadSample(MAX30102_Sample *s)
 {
-    uint8_t b[6];
-    uint8_t status;
-    uint8_t pointers[3];
-    uint8_t unread;
+    uint8_t b[6]; /* FIFO依次返回的RED三字节和IR三字节。 */
+    uint8_t status; /* 接收状态寄存器并通过读取动作清除中断。 */
+    uint8_t pointers[3]; /* 写指针、溢出计数、读指针的连续回读值。 */
+    uint8_t unread; /* 根据5位读写指针计算出的未读样本组数。 */
 
     if (s == 0 || !rr(REG_INTR_STATUS_1, &status, 1U) ||
         !rr(REG_INTR_STATUS_2, &status, 1U) ||

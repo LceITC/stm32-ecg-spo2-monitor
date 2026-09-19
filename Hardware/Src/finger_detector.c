@@ -1,17 +1,17 @@
 #include "finger_detector.h"
 
-#define FINGER_VALID_FRAMES 3U
-#define FINGER_INVALID_FRAMES 500U
-#define FINGER_IR_MIN 50000U
-#define FINGER_IR_MAX 200000U
-#define FINGER_RED_MIN 40000U
-#define FINGER_RED_MAX 180000U
-#define FINGER_NEAR_SATURATION 260000U
-#define FINGER_TRACK_MIN_PERCENT 25U
-#define FINGER_TRACK_MAX_PERCENT 240U
-#define FINGER_TRACK_RATIO_MIN_TENTHS 3U
-#define FINGER_TRACK_RATIO_MAX_TENTHS 15U
-#define FINGER_REFERENCE_FILTER_SHIFT 5U
+#define FINGER_VALID_FRAMES 3U      /* Finger OFF转ON所需连续有效帧数。 */
+#define FINGER_INVALID_FRAMES 500U  /* Finger ON转OFF所需连续无效帧数。 */
+#define FINGER_IR_MIN 50000U        /* 首次确认手指时的IR下限。 */
+#define FINGER_IR_MAX 200000U       /* 首次确认手指时的IR上限。 */
+#define FINGER_RED_MIN 40000U       /* 首次确认手指时的RED下限。 */
+#define FINGER_RED_MAX 180000U      /* 首次确认手指时的RED上限。 */
+#define FINGER_NEAR_SATURATION 260000U /* 接近18位满量程的拒绝阈值。 */
+#define FINGER_TRACK_MIN_PERCENT 25U   /* 跟踪值可降至参考值的25%。 */
+#define FINGER_TRACK_MAX_PERCENT 240U  /* 跟踪值可升至参考值的240%。 */
+#define FINGER_TRACK_RATIO_MIN_TENTHS 3U  /* 跟踪RED/IR最小值0.3。 */
+#define FINGER_TRACK_RATIO_MAX_TENTHS 15U /* 跟踪RED/IR最大值1.5。 */
+#define FINGER_REFERENCE_FILTER_SHIFT 5U  /* 参考值每点更新差值的1/32。 */
 
 /*
  * 三重有效判据：
@@ -32,7 +32,7 @@ static bool FingerDetector_IsValidSample(const MAX30102_Sample *sample)
  * 不会被固定阈值误判为离开，而真正移开时的幅值骤降仍会触发计时。
  */
 static bool FingerDetector_IsTrackingSample(const FingerDetector *detector,
-                                            const MAX30102_Sample *sample)
+                                             const MAX30102_Sample *sample)
 {
     if (detector->present == 0U || detector->reference_red == 0U ||
         detector->reference_ir == 0U || sample->red >= FINGER_NEAR_SATURATION ||
@@ -53,6 +53,10 @@ static bool FingerDetector_IsTrackingSample(const FingerDetector *detector,
            sample->red * 10U <= sample->ir * FINGER_TRACK_RATIO_MAX_TENTHS;
 }
 
+/*
+ * 用一阶慢速整数滤波更新手指直流参考值。reference是旧参考值，
+ * sample是当前严格有效样本，返回值用于下一帧跟踪范围判断。
+ */
 static uint32_t FingerDetector_FilterReference(uint32_t reference,
                                                uint32_t sample)
 {
@@ -65,6 +69,7 @@ static uint32_t FingerDetector_FilterReference(uint32_t reference,
     return reference - ((reference - sample) >> FINGER_REFERENCE_FILTER_SHIFT);
 }
 
+/* 将手指状态机恢复为Finger OFF，并清除所有连续帧和参考值。 */
 void FingerDetector_Init(FingerDetector *detector)
 {
     if (detector == 0)
@@ -79,12 +84,16 @@ void FingerDetector_Init(FingerDetector *detector)
     detector->reference_ir = 0U;
 }
 
+/*
+ * 先计算严格判据，再在Finger ON期间计算宽松跟踪判据；最后通过
+ * 3帧进入和500帧离开迟滞更新状态。
+ */
 uint8_t FingerDetector_Process(FingerDetector *detector,
                                const MAX30102_Sample *sample,
                                bool *sample_valid)
 {
-    bool strict_valid;
-    bool tracking_valid;
+    bool strict_valid; /* 当前样本是否满足初始三重固定阈值。 */
+    bool tracking_valid; /* 当前样本是否满足严格或动态跟踪阈值。 */
 
     if (detector == 0 || sample == 0)
     {

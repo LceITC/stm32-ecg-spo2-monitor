@@ -1,0 +1,21 @@
+# IDE and local workspace state
+.idea/claudeCodeTabState.xml
+.idea/.name
+
+# CMake and compiler output
+cmake-build-*/
+tests/build/
+tests/build-*/
+*.o
+*.d
+*.elf
+*.hex
+*.bin
+*.axf
+*.map
+*.lst
+
+# Common local metadata
+.DS_Store
+Thumbs.db
+

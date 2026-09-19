@@ -2,13 +2,16 @@
 #include "delay.h"
 #include "stm32f10x.h"
 
+/* ADC校准阶段允许等待的最长时间，避免硬件异常导致上电死循环。 */
 #define ADC_CALIBRATION_TIMEOUT_MS 20U
 
+/* 将上层来源枚举转换成SPL要求的ADC规则通道编号。 */
 static uint8_t ADC_ECG_Channel(ADC_ECG_Source source)
 {
-    return source == ADC_ECG_SOURCE_DIRECT ? ADC_Channel_1 : ADC_Channel_0;
+    return source == ADC_ECG_SOURCE_DIRECT ? ADC_Channel_2 : ADC_Channel_0;
 }
 
+/* 只改写规则序列第1项，不改变ADC触发方式、采样时间和DMA配置。 */
 void ADC_ECG_SelectSource(ADC_ECG_Source source)
 {
     ADC_RegularChannelConfig(ADC1, ADC_ECG_Channel(source), 1U,
@@ -21,16 +24,16 @@ void ADC_ECG_SelectSource(ADC_ECG_Source source)
  */
 ADC_ECG_InitStatus ADC_ECG_Init(ADC_ECG_Source source)
 {
-    GPIO_InitTypeDef gpio;
-    ADC_InitTypeDef adc;
-    uint32_t timeout_start;
+    GPIO_InitTypeDef gpio; /* 保存PA0、PA2模拟输入的GPIO配置。 */
+    ADC_InitTypeDef adc;   /* 保存ADC1单通道外部触发配置。 */
+    uint32_t timeout_start; /* 记录每个校准阶段开始时的毫秒计数。 */
 
     /* ADC 时钟为 72 MHz / 6 = 12 MHz，满足 STM32F103 ADC 规格。 */
     RCC_APB2PeriphClockCmd(RCC_APB2Periph_GPIOA | RCC_APB2Periph_ADC1, ENABLE);
     RCC_ADCCLKConfig(RCC_PCLK2_Div6);
 
-    /* 模拟输入模式关闭数字输入缓冲，减少 PA0 上的额外干扰。 */
-    gpio.GPIO_Pin = GPIO_Pin_0 | GPIO_Pin_1;
+    /* PA0 采集 AD8232，PA2 采集信号发生器直测信号。 */
+    gpio.GPIO_Pin = GPIO_Pin_0 | GPIO_Pin_2;
     gpio.GPIO_Mode = GPIO_Mode_AIN;
     GPIO_Init(GPIOA, &gpio);
 
